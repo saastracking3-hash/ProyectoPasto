@@ -39,6 +39,7 @@ import { useServiceUpdates } from "@/lib/hooks/useServiceUpdates";
 import { useToast } from "@/lib/hooks/useToast";
 import ToastContainer from "@/components/ui/Toast";
 import RealtimeIndicator from "@/components/ui/RealtimeIndicator";
+import CrewTracker from "@/components/ui/CrewTracker";
 
 interface ServiceDetail {
   service: ServiceRequest;
@@ -657,6 +658,24 @@ export default function ServiceDetailPage() {
           </div>
         </Card>
       )}
+
+      {/* Crew Tracker — shown when crew is in transit or arrived */}
+      {assignment &&
+        (service.status === "in_transit" || service.status === "arrived") && (
+          <Card>
+            <CardTitle className="mb-4">Equipo en camino</CardTitle>
+            <CrewTracker
+              assignmentId={assignment.id}
+              crewName={assignment.crew?.name || "Equipo"}
+              clientLat={address?.lat ?? null}
+              clientLng={address?.lng ?? null}
+              clientAddress={
+                address ? `${address.street} ${address.number}, ${address.zone}` : ""
+              }
+              status={service.status}
+            />
+          </Card>
+        )}
 
       {/* Photos */}
       {(beforePhotos.length > 0 ||

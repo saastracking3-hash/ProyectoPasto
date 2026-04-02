@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import {
   MapPin,
@@ -170,6 +170,51 @@ export default function CrewJobDetailPage() {
   useEffect(() => {
     fetchJob();
   }, [fetchJob]);
+
+  // GPS tracking — start when in_transit, stop when arrived/completed
+  const watchIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!job || !userId) return;
+
+    const isTracking = job.status === "in_transit" || job.status === "arrived";
+
+    if (isTracking && watchIdRef.current === null && "geolocation" in navigator) {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        async (pos) => {
+          try {
+            const supabase = createClient();
+            await supabase.from("crew_locations").upsert(
+              {
+                assignment_id: job.assignmentId,
+                user_id: userId,
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "assignment_id" }
+            );
+          } catch {
+            // Silently ignore GPS upsert errors
+          }
+        },
+        undefined,
+        { enableHighAccuracy: true, maximumAge: 15000, timeout: 10000 }
+      );
+    }
+
+    if (!isTracking && watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+  }, [job?.status, userId, job?.assignmentId]);
 
   const handleStatusChange = async (newStatus: ServiceStatus) => {
     if (!job || !userId) return;
