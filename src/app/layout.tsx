@@ -18,7 +18,7 @@ const inter = Inter({
 });
 
 const BASE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL || "https://thegreenside.com.ar";
+  process.env.NEXT_PUBLIC_SITE_URL || "https://proyecto-pasto.vercel.app";
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
