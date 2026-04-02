@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Montserrat, Inter } from "next/font/google";
 import "./globals.css";
 import GoogleAnalytics from "@/components/analytics/GoogleAnalytics";
@@ -19,6 +19,14 @@ const inter = Inter({
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_SITE_URL || "https://proyecto-pasto.vercel.app";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#2D6A4F",
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
@@ -93,7 +101,6 @@ export default function RootLayout({
       className={`${montserrat.variable} ${inter.variable} antialiased`}
     >
       <head>
-        <meta name="theme-color" content="#2D6A4F" />
         <StructuredData />
       </head>
       <body className="min-h-screen flex flex-col">

@@ -22,6 +22,7 @@ import {
   X,
   DollarSign,
 } from "lucide-react";
+import PlacesAutocomplete, { type PlaceResult } from "@/components/ui/PlacesAutocomplete";
 
 const STEPS = [
   "Tipo de servicio",
@@ -46,8 +47,13 @@ interface FormState {
   label: string;
   street: string;
   number: string;
+  floorApt: string;
+  neighborhood: string;
   city: string;
   zone: string;
+  postalCode: string;
+  lat: number;
+  lng: number;
   addressNotes: string;
   description: string;
   preferredDate: string;
@@ -64,8 +70,13 @@ const initialForm: FormState = {
   label: "",
   street: "",
   number: "",
+  floorApt: "",
+  neighborhood: "",
   city: "",
   zone: "",
+  postalCode: "",
+  lat: 0,
+  lng: 0,
   addressNotes: "",
   description: "",
   preferredDate: "",
@@ -227,8 +238,12 @@ export default function SolicitarPage() {
             label: form.label || "Direccion nueva",
             street: form.street,
             number: form.number,
-            city: form.city || "",
+            floor_apt: form.floorApt || null,
+            city: form.city || form.neighborhood || "",
             zone: form.zone,
+            postal_code: form.postalCode || null,
+            lat: form.lat || null,
+            lng: form.lng || null,
             notes: form.addressNotes || null,
             is_default: false,
           })
@@ -452,27 +467,72 @@ export default function SolicitarPage() {
                     label="Etiqueta (opcional)"
                     value={form.label}
                     onChange={(e) => update({ label: e.target.value })}
-                    placeholder="Ej: Casa, Oficina"
+                    placeholder="Ej: Casa, Oficina, Empresa"
                   />
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="col-span-2">
-                      <Input
-                        label="Calle"
-                        value={form.street}
-                        onChange={(e) => update({ street: e.target.value })}
-                        placeholder="Av. Libertador"
-                      />
-                    </div>
-                    <Input
-                      label="Numero"
-                      value={form.number}
-                      onChange={(e) => update({ number: e.target.value })}
-                      placeholder="1234"
-                    />
-                  </div>
+
+                  {/* Google Places search */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                      Zona
+                      Buscar dirección *
+                    </label>
+                    <PlacesAutocomplete
+                      placeholder="Ej: Av. Libertador 1234, Buenos Aires"
+                      onSelect={(place: PlaceResult) => {
+                        update({
+                          street: place.street,
+                          number: place.number,
+                          neighborhood: place.neighborhood,
+                          city: place.city,
+                          postalCode: place.postalCode,
+                          lat: place.lat,
+                          lng: place.lng,
+                        });
+                      }}
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      Busca como en Google Maps — selecciona la dirección exacta de la lista
+                    </p>
+                  </div>
+
+                  {/* Show parsed fields after selection */}
+                  {form.street && (
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-3 space-y-2">
+                      <p className="text-xs font-semibold text-green-800 mb-1">Dirección detectada</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-xs text-gray-500">Calle</p>
+                          <p className="text-sm font-medium text-gray-900">{form.street}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500">Número</p>
+                          <p className="text-sm font-medium text-gray-900">{form.number || "—"}</p>
+                        </div>
+                        {form.neighborhood && (
+                          <div>
+                            <p className="text-xs text-gray-500">Barrio</p>
+                            <p className="text-sm font-medium text-gray-900">{form.neighborhood}</p>
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-xs text-gray-500">Localidad</p>
+                          <p className="text-sm font-medium text-gray-900">{form.city}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Floor/apt */}
+                  <Input
+                    label="Piso / Departamento (opcional)"
+                    value={form.floorApt}
+                    onChange={(e) => update({ floorApt: e.target.value })}
+                    placeholder="Ej: 3° B, PB"
+                  />
+
+                  {/* Zone selector */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Zona de cobertura *
                     </label>
                     <select
                       value={form.zone}
@@ -481,17 +541,16 @@ export default function SolicitarPage() {
                     >
                       <option value="">Seleccionar zona</option>
                       {zones.map((z) => (
-                        <option key={z} value={z}>
-                          {z}
-                        </option>
+                        <option key={z} value={z}>{z}</option>
                       ))}
                     </select>
                   </div>
+
                   <Input
                     label="Notas de acceso (opcional)"
                     value={form.addressNotes}
                     onChange={(e) => update({ addressNotes: e.target.value })}
-                    placeholder="Timbre, indicaciones para llegar, etc."
+                    placeholder="Timbre, portón, indicaciones para llegar..."
                   />
                 </div>
               )}
