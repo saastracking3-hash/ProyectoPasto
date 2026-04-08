@@ -17,6 +17,9 @@ import {
   Send,
   Eye,
   CheckCircle,
+  QrCode,
+  Printer,
+  X,
 } from "lucide-react";
 import Card, { CardHeader, CardTitle } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -26,6 +29,7 @@ import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
 import { SERVICE_STATUS_LABELS } from "@/lib/types";
 import type { ServiceStatus } from "@/lib/types";
 import { createAssignment } from "@/app/actions/assignments";
+import WhatsAppLink from "@/components/ui/WhatsAppLink";
 
 interface SolicitudDetail {
   id: string;
@@ -96,6 +100,7 @@ export default function SolicitudDetailPage() {
   const [assignEndTime, setAssignEndTime] = useState("");
   const [assigning, setAssigning] = useState(false);
   const [currentAssignment, setCurrentAssignment] = useState<CurrentAssignment | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -418,6 +423,17 @@ export default function SolicitudDetailPage() {
                     {solicitud.client.phone || "-"}
                   </p>
                   <p className="text-xs text-gray-500">Telefono</p>
+                  {solicitud.client.phone && (
+                    <div className="mt-1.5">
+                      <WhatsAppLink
+                        phone={solicitud.client.phone}
+                        message={`Hola ${solicitud.client.full_name}, te contactamos desde The Green Side sobre tu solicitud #${solicitud.request_number}.`}
+                        label="Contactar por WhatsApp"
+                        size="sm"
+                        variant="button"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-3 sm:col-span-2">
@@ -625,6 +641,119 @@ export default function SolicitudDetailPage() {
               </div>
             )}
           </Card>
+
+          {/* QR del domicilio */}
+          {(() => {
+            const qrUrl = currentAssignment
+              ? `https://proyecto-pasto.vercel.app/crew/trabajos/${currentAssignment.id}`
+              : `https://proyecto-pasto.vercel.app/admin/solicitudes/${solicitud.id}`;
+            const qrImageSrc = `https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encodeURIComponent(qrUrl)}&choe=UTF-8`;
+            const addressText = `${solicitud.address.street} ${solicitud.address.number}${solicitud.address.floor_apt ? `, ${solicitud.address.floor_apt}` : ""}`;
+            const cityText = solicitud.address.city;
+
+            return (
+              <>
+                {/* Print styles — only visible on print, hides everything except .qr-print-area */}
+                <style dangerouslySetInnerHTML={{ __html: `
+                  @media print {
+                    body > * { display: none !important; }
+                    .qr-print-area { display: flex !important; }
+                    .qr-print-area * { display: revert !important; }
+                  }
+                  .qr-print-area {
+                    display: none;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 24px;
+                    font-family: sans-serif;
+                  }
+                  @media print {
+                    .qr-print-area {
+                      position: fixed;
+                      inset: 0;
+                      display: flex;
+                      flex-direction: column;
+                      align-items: center;
+                      justify-content: center;
+                      background: white;
+                      z-index: 9999;
+                    }
+                  }
+                `}} />
+
+                {/* Hidden print area — always in DOM */}
+                <div className="qr-print-area">
+                  <p style={{ fontSize: 13, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: "#166534" }}>
+                    The Green Side
+                  </p>
+                  <img src={qrImageSrc} alt="QR del domicilio" width={200} height={200} />
+                  <p style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>
+                    Servicio #{solicitud.request_number}
+                  </p>
+                  <p style={{ fontSize: 13, margin: 0 }}>{addressText}</p>
+                  <p style={{ fontSize: 13, margin: 0, color: "#555" }}>{cityText}</p>
+                </div>
+
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between w-full">
+                      <CardTitle>
+                        <span className="flex items-center gap-2">
+                          <QrCode size={18} />
+                          QR del domicilio
+                        </span>
+                      </CardTitle>
+                      <button
+                        type="button"
+                        onClick={() => setQrOpen((v) => !v)}
+                        className="flex items-center gap-1.5 text-sm font-medium text-green-700 hover:text-green-900 transition-colors"
+                      >
+                        {qrOpen ? (
+                          <>
+                            <X size={15} />
+                            Cerrar
+                          </>
+                        ) : (
+                          <>
+                            <QrCode size={15} />
+                            Generar QR
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </CardHeader>
+
+                  {qrOpen && (
+                    <div className="flex flex-col items-center gap-4 py-2">
+                      <img
+                        src={qrImageSrc}
+                        alt="QR del domicilio"
+                        width={200}
+                        height={200}
+                        className="rounded-lg border border-gray-200 shadow-sm"
+                      />
+                      <div className="text-center space-y-0.5">
+                        <p className="text-sm font-semibold text-gray-900">
+                          Servicio #{solicitud.request_number}
+                        </p>
+                        <p className="text-sm text-gray-700">{addressText}</p>
+                        <p className="text-xs text-gray-500">{cityText}</p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => window.print()}
+                      >
+                        <Printer size={14} />
+                        Imprimir QR
+                      </Button>
+                    </div>
+                  )}
+                </Card>
+              </>
+            );
+          })()}
 
           {/* Internal Notes */}
           <Card>

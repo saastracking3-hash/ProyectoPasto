@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -45,6 +46,7 @@ interface ServiceRow {
   created_at: string;
   service_type_name: string;
   address_label: string;
+  thumbnailUrl: string | null;
 }
 
 function ListSkeleton() {
@@ -96,18 +98,53 @@ export default function ServiciosPage() {
         const { data, error: svcError } = await query;
         if (svcError) throw svcError;
 
-        setServices(
-          (data || []).map((s: any) => ({
-            id: s.id,
-            request_number: s.request_number,
-            status: s.status as ServiceStatus,
-            created_at: s.created_at,
-            service_type_name: s.service_types?.name || "Servicio",
-            address_label: s.addresses
-              ? `${s.addresses.street} ${s.addresses.number}, ${s.addresses.zone}`
-              : "",
-          }))
-        );
+        const rows: ServiceRow[] = (data || []).map((s: any) => ({
+          id: s.id,
+          request_number: s.request_number,
+          status: s.status as ServiceStatus,
+          created_at: s.created_at,
+          service_type_name: s.service_types?.name || "Servicio",
+          address_label: s.addresses
+            ? `${s.addresses.street} ${s.addresses.number}, ${s.addresses.zone}`
+            : "",
+          thumbnailUrl: null,
+        }));
+
+        // Batch-fetch the most recent "after" photo for every completed service
+        const completedIds = rows
+          .filter((r) => (completedStatuses as ServiceStatus[]).includes(r.status))
+          .map((r) => r.id);
+
+        if (completedIds.length > 0) {
+          const { data: photos } = await supabase
+            .from("service_photos")
+            .select("storage_path, assignments!inner(service_request_id)")
+            .in("assignments.service_request_id", completedIds)
+            .eq("photo_type", "after")
+            .order("created_at", { ascending: false });
+
+          if (photos && photos.length > 0) {
+            // Build a map: service_request_id -> first (most recent) storage_path
+            const photoMap = new Map<string, string>();
+            for (const p of photos) {
+              const svcId = (p as any).assignments?.service_request_id as string | undefined;
+              if (svcId && !photoMap.has(svcId)) {
+                photoMap.set(svcId, p.storage_path);
+              }
+            }
+
+            // Resolve public URLs
+            for (const row of rows) {
+              const path = photoMap.get(row.id);
+              if (path) {
+                row.thumbnailUrl =
+                  supabase.storage.from("service-photos").getPublicUrl(path).data.publicUrl;
+              }
+            }
+          }
+        }
+
+        setServices(rows);
       } catch (err: any) {
         setError(err.message || "Error al cargar los servicios");
       } finally {
@@ -200,6 +237,31 @@ export default function ServiciosPage() {
                       {formatDate(service.created_at)}
                     </p>
                   </div>
+
+                  {/* Right-side visual indicator */}
+                  {(completedStatuses as ServiceStatus[]).includes(service.status) ? (
+                    service.thumbnailUrl ? (
+                      <div className="w-14 h-14 rounded-lg overflow-hidden bg-gray-100 shrink-0">
+                        <Image
+                          src={service.thumbnailUrl}
+                          alt="Foto del trabajo"
+                          width={56}
+                          height={56}
+                          className="w-full h-full object-cover rounded-lg"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-14 h-14 shrink-0" />
+                    )
+                  ) : (activeStatuses as ServiceStatus[]).includes(service.status) ? (
+                    <div className="flex flex-col items-center gap-1 shrink-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+                      <span className="text-[10px] font-medium text-green-700 whitespace-nowrap">
+                        En curso
+                      </span>
+                    </div>
+                  ) : null}
+
                   <ArrowRight size={18} className="text-gray-400 shrink-0" />
                 </div>
               </Card>

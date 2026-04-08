@@ -21,6 +21,8 @@ import {
   Menu,
   X,
   Radio,
+  Trophy,
+  Map,
 } from "lucide-react";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -33,6 +35,7 @@ const navItems = [
   { href: "/admin/presupuestos", label: "Presupuestos", icon: FileText },
   { href: "/admin/agenda", label: "Agenda", icon: Calendar },
   { href: "/admin/cuadrillas", label: "Cuadrillas", icon: Users },
+  { href: "/admin/crew-performance", label: "Rendimiento", icon: Trophy },
   { href: "/admin/servicios", label: "Servicios", icon: Wrench },
   { href: "/admin/planes", label: "Planes", icon: CalendarCheck },
   { href: "/admin/contratos", label: "Contratos", icon: ScrollText },
@@ -40,6 +43,7 @@ const navItems = [
   { href: "/admin/personal", label: "Personal", icon: UserCog },
   { href: "/admin/finanzas", label: "Finanzas", icon: DollarSign },
   { href: "/admin/reportes", label: "Reportes", icon: BarChart3 },
+  { href: "/admin/reportes/mapa", label: "Mapa de demanda", icon: Map },
   { href: "/admin/clima", label: "Clima", icon: CloudSun },
   { href: "/admin/configuracion", label: "Configuracion", icon: Settings },
 ];

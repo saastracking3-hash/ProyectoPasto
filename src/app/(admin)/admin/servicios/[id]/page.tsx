@@ -16,6 +16,11 @@ import {
   CheckSquare,
   CheckCircle2,
   XCircle,
+  MessageCircle,
+  Copy,
+  Check,
+  CalendarPlus,
+  Printer,
 } from "lucide-react";
 import Card, { CardHeader, CardTitle } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -28,6 +33,7 @@ import type { ServiceStatus } from "@/lib/types";
 
 interface ServiceDetail {
   id: string;
+  client_id: string;
   request_number: number;
   status: ServiceStatus;
   urgency: string;
@@ -98,6 +104,7 @@ export default function ServicioDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [transitioning, setTransitioning] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -111,7 +118,7 @@ export default function ServicioDetailPage() {
         const { data: srData, error: srErr } = await supabase
           .from("service_requests")
           .select(
-            "id, request_number, status, urgency, created_at, description, profiles!service_requests_client_id_fkey(full_name, phone), service_types!inner(name), addresses!inner(street, number, city, zone)"
+            "id, client_id, request_number, status, urgency, created_at, description, profiles!service_requests_client_id_fkey(full_name, phone), service_types!inner(name), addresses!inner(street, number, city, zone)"
           )
           .eq("id", id)
           .single();
@@ -125,6 +132,7 @@ export default function ServicioDetailPage() {
 
         setService({
           id: sr.id as string,
+          client_id: sr.client_id as string,
           request_number: sr.request_number as number,
           status: sr.status as ServiceStatus,
           urgency: sr.urgency as string,
@@ -341,6 +349,35 @@ export default function ServicioDetailPage() {
   const photosByType = (type: string) => photos.filter((p) => p.photo_type === type);
   const typeLabels: Record<string, string> = { before: "Antes", during: "Durante", after: "Despues" };
 
+  // Feature 1: Suggested next visit date (+30 days from scheduled date or created_at)
+  const showNextVisit = (["completed_by_crew", "validated", "closed"] as ServiceStatus[]).includes(service.status);
+  const suggestedNextDate = (() => {
+    const baseDate = assignment?.scheduled_date
+      ? new Date(assignment.scheduled_date + "T12:00:00")
+      : new Date(service.created_at);
+    baseDate.setDate(baseDate.getDate() + 30);
+    return baseDate;
+  })();
+  const suggestedDateParam = suggestedNextDate.toISOString().split("T")[0];
+  const suggestedDateLabel = suggestedNextDate.toLocaleDateString("es-AR", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+  // Feature 2: WhatsApp link
+  const whatsappHref = service.client.phone
+    ? `https://wa.me/54${service.client.phone.replace(/\D/g, "")}?text=Hola%20${encodeURIComponent(service.client.full_name)}%2C%20te%20contactamos%20desde%20The%20Green%20Side%20sobre%20tu%20servicio%20%23${service.request_number}`
+    : null;
+
+  // Copy link handler
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(window.location.href).then(() => {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    });
+  };
+
   return (
     <div className="space-y-6">
       {error && (
@@ -368,7 +405,24 @@ export default function ServicioDetailPage() {
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={handleCopyLink}
+            title="Copiar link del servicio"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            {copiedLink ? (
+              <>
+                <Check size={15} className="text-green-600" />
+                <span className="text-green-600">¡Copiado!</span>
+              </>
+            ) : (
+              <>
+                <Copy size={15} />
+                Copiar link
+              </>
+            )}
+          </button>
           {nextStatuses.map((ns) => {
             const isValidate = ns === "validated";
             const isClose = ns === "closed";
@@ -408,13 +462,25 @@ export default function ServicioDetailPage() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center">
+                <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center flex-shrink-0">
                   <Phone size={20} className="text-blue-700" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-medium text-gray-900">{service.client.phone || "-"}</p>
                   <p className="text-xs text-gray-500">Telefono</p>
                 </div>
+                {whatsappHref && (
+                  <a
+                    href={whatsappHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Contactar por WhatsApp"
+                    className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold rounded-lg transition-colors flex-shrink-0"
+                  >
+                    <MessageCircle size={14} />
+                    WhatsApp
+                  </a>
+                )}
               </div>
               <div className="flex items-center gap-3 sm:col-span-2">
                 <div className="w-10 h-10 bg-amber-50 rounded-full flex items-center justify-center">
@@ -634,6 +700,36 @@ export default function ServicioDetailPage() {
               </p>
             )}
           </Card>
+
+          {/* Proxima visita */}
+          {showNextVisit && (
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <span className="flex items-center gap-2">
+                    <CalendarPlus size={18} />
+                    Proxima visita
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <div className="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                  <p className="text-xs text-gray-500 mb-0.5">Proxima visita sugerida</p>
+                  <p className="text-base font-semibold text-gray-900">{suggestedDateLabel}</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Basado en +30 dias desde la visita anterior
+                  </p>
+                </div>
+                <Link
+                  href={`/admin/agenda?suggest_date=${suggestedDateParam}&client_id=${service.client_id}`}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-700 hover:bg-green-800 text-white text-sm font-semibold rounded-lg transition-colors"
+                >
+                  <CalendarPlus size={16} />
+                  Crear asignacion
+                </Link>
+              </div>
+            </Card>
+          )}
         </div>
 
         {/* Sidebar - Timeline */}
@@ -676,6 +772,17 @@ export default function ServicioDetailPage() {
             </div>
           </Card>
         </div>
+      </div>
+
+      {/* Generate report */}
+      <div className="flex justify-end pt-2 border-t border-gray-100">
+        <Link
+          href={`/admin/servicios/${service.id}/report`}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          <Printer size={15} />
+          Generar informe
+        </Link>
       </div>
     </div>
   );

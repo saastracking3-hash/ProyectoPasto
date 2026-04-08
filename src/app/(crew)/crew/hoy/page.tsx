@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { MapPin, Clock, ChevronRight, CalendarDays } from "lucide-react";
+import { MapPin, Clock, ChevronRight, CalendarDays, LayoutList, Clock3 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -19,10 +19,59 @@ interface TodayJob {
   serviceType: string;
   address: string;
   scheduledTime: string;
+  scheduledStartTime: string | null; // "HH:MM:SS" raw
+  scheduledEndTime: string | null;   // "HH:MM:SS" raw
   status: ServiceStatus;
   clientName: string;
 }
 
+// ─── Timeline constants ────────────────────────────────────────────────────────
+const TIMELINE_START_HOUR = 7;
+const TIMELINE_END_HOUR = 19;
+const TIMELINE_HOURS = TIMELINE_END_HOUR - TIMELINE_START_HOUR; // 12
+const HOUR_HEIGHT_PX = 50; // px per hour
+const TOTAL_HEIGHT_PX = TIMELINE_HOURS * HOUR_HEIGHT_PX; // 600px
+const TIME_LABEL_WIDTH = 44; // px for the label column
+
+/** Parse "HH:MM:SS" or "HH:MM" into fractional hours (e.g. "09:30" → 9.5) */
+function parseTimeToHours(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return h + (m || 0) / 60;
+}
+
+/** Convert fractional hours to top offset % inside the timeline */
+function hoursToTopPercent(h: number): number {
+  return ((h - TIMELINE_START_HOUR) / TIMELINE_HOURS) * 100;
+}
+
+function durationPercent(start: number, end: number): number {
+  return ((end - start) / TIMELINE_HOURS) * 100;
+}
+
+/** Tailwind bg class by status */
+function statusColor(status: ServiceStatus): string {
+  switch (status) {
+    case "crew_assigned":
+    case "scheduled":
+      return "bg-green-600";
+    case "in_transit":
+      return "bg-blue-500";
+    case "arrived":
+      return "bg-teal-500";
+    case "in_progress":
+      return "bg-green-700";
+    case "paused":
+      return "bg-amber-500";
+    case "completed_by_crew":
+    case "validated":
+    case "closed":
+      return "bg-gray-400";
+    default:
+      return "bg-green-600";
+  }
+}
+
+// ─── Skeleton ──────────────────────────────────────────────────────────────────
 function SkeletonCard() {
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 animate-pulse">
@@ -40,11 +89,144 @@ function SkeletonCard() {
   );
 }
 
+// ─── Timeline component ────────────────────────────────────────────────────────
+function DayTimeline({ jobs }: { jobs: TodayJob[] }) {
+  const now = new Date();
+  const nowHours = now.getHours() + now.getMinutes() / 60;
+  const showNowLine =
+    nowHours >= TIMELINE_START_HOUR && nowHours <= TIMELINE_END_HOUR;
+  const nowTopPercent = hoursToTopPercent(nowHours);
+
+  // Only jobs with both start and end times
+  const timedJobs = jobs.filter(
+    (j) => j.scheduledStartTime && j.scheduledEndTime
+  );
+
+  const hourLabels = Array.from(
+    { length: TIMELINE_HOURS + 1 },
+    (_, i) => TIMELINE_START_HOUR + i
+  );
+
+  return (
+    <div className="overflow-x-auto">
+      <div
+        className="flex"
+        style={{ minWidth: 320 }}
+      >
+        {/* Hour labels column */}
+        <div
+          className="flex-shrink-0 relative"
+          style={{ width: TIME_LABEL_WIDTH, height: TOTAL_HEIGHT_PX }}
+        >
+          {hourLabels.map((h, i) => (
+            <div
+              key={h}
+              className="absolute flex items-center justify-end pr-2"
+              style={{
+                top: i * HOUR_HEIGHT_PX - 9, // center label on the line
+                right: 0,
+                width: TIME_LABEL_WIDTH,
+              }}
+            >
+              <span className="text-xs text-gray-400 font-mono leading-none select-none">
+                {String(h).padStart(2, "0")}:00
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Main timeline area */}
+        <div
+          className="relative flex-1 border-l border-gray-200"
+          style={{ height: TOTAL_HEIGHT_PX }}
+        >
+          {/* Hour grid lines */}
+          {hourLabels.map((h, i) => (
+            <div
+              key={h}
+              className="absolute left-0 right-0 border-t border-gray-100"
+              style={{ top: i * HOUR_HEIGHT_PX }}
+            />
+          ))}
+
+          {/* NOW line */}
+          {showNowLine && (
+            <div
+              className="absolute left-0 right-0 flex items-center z-20 pointer-events-none"
+              style={{ top: `${nowTopPercent}%` }}
+            >
+              <div className="w-2 h-2 rounded-full bg-red-500 -ml-1 flex-shrink-0" />
+              <div className="flex-1 border-t-2 border-red-500" />
+              <span className="text-[10px] font-semibold text-red-500 ml-1 pr-1 bg-white">
+                AHORA
+              </span>
+            </div>
+          )}
+
+          {/* No timed jobs message */}
+          {timedJobs.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <p className="text-sm text-gray-400">
+                Ningún trabajo tiene horario asignado
+              </p>
+            </div>
+          )}
+
+          {/* Job blocks */}
+          {timedJobs.map((job) => {
+            const startH = parseTimeToHours(job.scheduledStartTime!);
+            const endH = parseTimeToHours(job.scheduledEndTime!);
+            const clampedStart = Math.max(startH, TIMELINE_START_HOUR);
+            const clampedEnd = Math.min(endH, TIMELINE_END_HOUR);
+            if (clampedEnd <= clampedStart) return null;
+
+            const topPct = hoursToTopPercent(clampedStart);
+            const heightPct = durationPercent(clampedStart, clampedEnd);
+            const minHeightPx = 28; // always readable
+
+            return (
+              <Link
+                key={job.id}
+                href={`/crew/trabajos/${job.id}`}
+                className="absolute left-2 right-2 z-10 group"
+                style={{
+                  top: `${topPct}%`,
+                  height: `max(${heightPct}%, ${minHeightPx}px)`,
+                }}
+              >
+                <div
+                  className={`h-full rounded-lg px-2 py-1 overflow-hidden shadow-sm
+                    flex flex-col justify-start gap-0.5 opacity-90
+                    hover:opacity-100 transition-opacity cursor-pointer
+                    ${statusColor(job.status)}`}
+                >
+                  <p className="text-white text-[11px] font-semibold leading-tight truncate">
+                    {job.serviceType}
+                  </p>
+                  <p className="text-white/80 text-[10px] leading-tight truncate">
+                    {job.address}
+                  </p>
+                  <p className="text-white/60 text-[9px] leading-tight">
+                    {job.scheduledStartTime!.slice(0, 5)} –{" "}
+                    {job.scheduledEndTime!.slice(0, 5)}
+                  </p>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Page ──────────────────────────────────────────────────────────────────────
 export default function CrewHoyPage() {
   const [jobs, setJobs] = useState<TodayJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [noCrew, setNoCrew] = useState(false);
+  const [view, setView] = useState<"lista" | "timeline">("lista");
   const crewIdRef = useRef<string | null>(null);
 
   const { toasts, addToast, removeToast } = useToast();
@@ -128,6 +310,8 @@ export default function CrewHoyPage() {
           serviceType: sr.service_type.name,
           address: `${addr.street} ${addr.number}, ${addr.city}`,
           scheduledTime: timeSlot,
+          scheduledStartTime: a.scheduled_start_time ?? null,
+          scheduledEndTime: a.scheduled_end_time ?? null,
           status: sr.status as ServiceStatus,
           clientName: sr.client?.full_name || "Cliente",
         };
@@ -212,8 +396,38 @@ export default function CrewHoyPage() {
         </div>
       </div>
 
-      {/* Jobs list */}
+      {/* ── Tu día de hoy section ──────────────────────────────────────────── */}
       <div className="space-y-3">
+        {/* Section header with toggle */}
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-700">Tu día de hoy</h2>
+          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setView("lista")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                view === "lista"
+                  ? "bg-white shadow-sm text-gray-800"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              <LayoutList size={13} />
+              Vista lista
+            </button>
+            <button
+              onClick={() => setView("timeline")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                view === "timeline"
+                  ? "bg-white shadow-sm text-gray-800"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              <Clock3 size={13} />
+              Vista timeline
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
         {loading ? (
           <>
             <SkeletonCard />
@@ -226,38 +440,62 @@ export default function CrewHoyPage() {
             title="Sin trabajos hoy"
             description="No tenes trabajos asignados para hoy."
           />
-        ) : (
-          jobs.map((job) => (
-            <Link key={job.id} href={`/crew/trabajos/${job.id}`}>
-              <Card className="hover:border-green-300 transition-colors mb-3">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-2 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-gray-400">
-                        #{job.requestNumber}
-                      </span>
-                      <StatusBadge status={job.status} />
+        ) : view === "lista" ? (
+          /* ── List view ── */
+          <div className="space-y-3">
+            {jobs.map((job) => (
+              <Link key={job.id} href={`/crew/trabajos/${job.id}`}>
+                <Card className="hover:border-green-300 transition-colors mb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-2 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-gray-400">
+                          #{job.requestNumber}
+                        </span>
+                        <StatusBadge status={job.status} />
+                      </div>
+                      <h3 className="font-semibold text-gray-900">
+                        {job.serviceType}
+                      </h3>
+                      <p className="text-sm text-gray-500">{job.clientName}</p>
+                      <div className="flex items-center gap-4 text-sm text-gray-500">
+                        <span className="flex items-center gap-1">
+                          <MapPin size={14} />
+                          {job.address}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 text-sm text-gray-500">
+                        <Clock size={14} />
+                        {job.scheduledTime}
+                      </div>
                     </div>
-                    <h3 className="font-semibold text-gray-900">
-                      {job.serviceType}
-                    </h3>
-                    <p className="text-sm text-gray-500">{job.clientName}</p>
-                    <div className="flex items-center gap-4 text-sm text-gray-500">
-                      <span className="flex items-center gap-1">
-                        <MapPin size={14} />
-                        {job.address}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 text-sm text-gray-500">
-                      <Clock size={14} />
-                      {job.scheduledTime}
-                    </div>
+                    <ChevronRight size={20} className="text-gray-300 mt-1" />
                   </div>
-                  <ChevronRight size={20} className="text-gray-300 mt-1" />
-                </div>
-              </Card>
-            </Link>
-          ))
+                </Card>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          /* ── Timeline view ── */
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <DayTimeline jobs={jobs} />
+            {/* Legend */}
+            <div className="mt-4 pt-3 border-t border-gray-100 flex flex-wrap gap-3">
+              {[
+                { label: "Asignado", cls: "bg-green-600" },
+                { label: "En tránsito", cls: "bg-blue-500" },
+                { label: "Llegó", cls: "bg-teal-500" },
+                { label: "En progreso", cls: "bg-green-700" },
+                { label: "Pausado", cls: "bg-amber-500" },
+                { label: "Completado", cls: "bg-gray-400" },
+              ].map(({ label, cls }) => (
+                <span key={label} className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <span className={`inline-block w-2.5 h-2.5 rounded-sm ${cls}`} />
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 

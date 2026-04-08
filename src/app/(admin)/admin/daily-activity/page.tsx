@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Radio,
+  AlertTriangle,
 } from "lucide-react";
 
 interface LiveAssignment {
@@ -29,9 +30,11 @@ interface LiveAssignment {
   lng: number | null;
   scheduledStartTime: string | null;
   scheduledEndTime: string | null;
+  actualStartAt: string | null;
   lastLocationAt: string | null;
   crewLat: number | null;
   crewLng: number | null;
+  isDelayed: boolean;
 }
 
 const STATUS_ORDER: ServiceStatus[] = [
@@ -70,6 +73,70 @@ function timeSince(iso: string): string {
   return `${Math.floor(diff / 3600)}h`;
 }
 
+/**
+ * Parses a time-only string like "09:30:00" into today's Date object.
+ * Returns null if the string is falsy.
+ */
+function timeStringToDate(timeStr: string | null): Date | null {
+  if (!timeStr) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  return new Date(`${today}T${timeStr}`);
+}
+
+/**
+ * Computes whether a job is delayed based on the three rules:
+ * 1. in_progress AND actual_start_at exists AND elapsed > estimated_duration * 1.5
+ * 2. crew_assigned or in_transit AND now > scheduled_start_time + 30 min
+ * 3. in_progress AND now > scheduled_end_time + 15 min
+ */
+function computeIsDelayed(
+  status: ServiceStatus,
+  scheduledStartTime: string | null,
+  scheduledEndTime: string | null,
+  actualStartAt: string | null
+): boolean {
+  const now = Date.now();
+
+  // Rule 1: in_progress + actual_start_at + elapsed > estimated_duration * 1.5
+  if (status === "in_progress" && actualStartAt) {
+    const startDate = timeStringToDate(scheduledStartTime);
+    const endDate = timeStringToDate(scheduledEndTime);
+    const actualStart = new Date(actualStartAt);
+
+    if (startDate && endDate) {
+      const estimatedDurationMs = endDate.getTime() - startDate.getTime();
+      const elapsedMs = now - actualStart.getTime();
+      if (estimatedDurationMs > 0 && elapsedMs > estimatedDurationMs * 1.5) {
+        return true;
+      }
+    }
+  }
+
+  // Rule 2: crew_assigned or in_transit AND now > scheduled_start_time + 30 min
+  if (status === "crew_assigned" || status === "in_transit") {
+    const startDate = timeStringToDate(scheduledStartTime);
+    if (startDate) {
+      const threshold = startDate.getTime() + 30 * 60 * 1000;
+      if (now > threshold) {
+        return true;
+      }
+    }
+  }
+
+  // Rule 3: in_progress AND now > scheduled_end_time + 15 min
+  if (status === "in_progress") {
+    const endDate = timeStringToDate(scheduledEndTime);
+    if (endDate) {
+      const threshold = endDate.getTime() + 15 * 60 * 1000;
+      if (now > threshold) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 export default function DailyActivityPage() {
   const [assignments, setAssignments] = useState<LiveAssignment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,6 +152,7 @@ export default function DailyActivityPage() {
         id,
         scheduled_start_time,
         scheduled_end_time,
+        actual_start_at,
         service_request:service_requests!inner (
           id,
           request_number,
@@ -120,11 +188,14 @@ export default function DailyActivityPage() {
       const sr = a.service_request as any;
       const addr = sr.address;
       const loc = locationMap[a.id] || null;
+      const status = sr.status as ServiceStatus;
+      const actualStartAt: string | null = (a as any).actual_start_at ?? null;
+
       return {
         assignmentId: a.id,
         serviceRequestId: sr.id,
         requestNumber: sr.request_number,
-        status: sr.status as ServiceStatus,
+        status,
         crewName: (a.crew as any)?.name || "Cuadrilla",
         clientName: sr.client?.full_name || "Cliente",
         street: addr.street,
@@ -134,9 +205,16 @@ export default function DailyActivityPage() {
         lng: addr.lng,
         scheduledStartTime: a.scheduled_start_time,
         scheduledEndTime: a.scheduled_end_time,
+        actualStartAt,
         lastLocationAt: loc?.updated_at || null,
         crewLat: loc?.lat || null,
         crewLng: loc?.lng || null,
+        isDelayed: computeIsDelayed(
+          status,
+          a.scheduled_start_time,
+          a.scheduled_end_time,
+          actualStartAt
+        ),
       };
     });
 
@@ -157,7 +235,6 @@ export default function DailyActivityPage() {
 
     // Realtime subscription for service_requests status changes
     const supabase = createClient();
-    const today = new Date().toISOString().slice(0, 10);
 
     const channel = supabase
       .channel("daily-activity")
@@ -189,6 +266,9 @@ export default function DailyActivityPage() {
   const completedCount = assignments.filter(
     (a) => a.status === "completed_by_crew"
   ).length;
+
+  const delayedJobs = assignments.filter((a) => a.isDelayed);
+  const delayedCount = delayedJobs.length;
 
   const openMaps = (a: LiveAssignment) => {
     const dest =
@@ -222,8 +302,33 @@ export default function DailyActivityPage() {
         </button>
       </div>
 
+      {/* Delayed jobs alert banner */}
+      {!loading && delayedCount > 0 && (
+        <div className="rounded-xl border border-red-300 bg-red-50 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle size={16} className="text-red-600 shrink-0" />
+            <p className="text-sm font-semibold text-red-700">
+              {delayedCount === 1
+                ? "1 trabajo con demora"
+                : `${delayedCount} trabajos con demora`}{" "}
+              — revisalos antes de que el cliente se contacte
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {delayedJobs.map((j) => (
+              <span
+                key={j.assignmentId}
+                className="inline-flex items-center gap-1 text-xs font-medium text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full"
+              >
+                {j.crewName} · #{j.requestNumber}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* KPI strip */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className={`grid gap-3 ${delayedCount > 0 ? "grid-cols-4" : "grid-cols-3"}`}>
         <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
           <p className="text-2xl font-bold text-gray-900">{assignments.length}</p>
           <p className="text-xs text-gray-500 mt-0.5">Total hoy</p>
@@ -236,6 +341,12 @@ export default function DailyActivityPage() {
           <p className="text-2xl font-bold text-gray-700">{completedCount}</p>
           <p className="text-xs text-gray-500 mt-0.5">Finalizados</p>
         </div>
+        {delayedCount > 0 && (
+          <div className="bg-red-600 rounded-xl border border-red-700 p-4 text-center">
+            <p className="text-2xl font-bold text-white">{delayedCount}</p>
+            <p className="text-xs text-red-100 mt-0.5">Demorados</p>
+          </div>
+        )}
       </div>
 
       {/* Live feed */}
@@ -256,12 +367,17 @@ export default function DailyActivityPage() {
             const isActive = ["in_transit", "arrived", "in_progress"].includes(a.status);
             const hasLocation = !!a.crewLat && !!a.crewLng;
 
+            let cardBorder = "border-gray-100";
+            if (a.isDelayed) {
+              cardBorder = "border-red-300";
+            } else if (isActive) {
+              cardBorder = "border-green-200";
+            }
+
             return (
               <div
                 key={a.assignmentId}
-                className={`bg-white rounded-xl border-2 p-4 transition-all ${
-                  isActive ? "border-green-200 shadow-sm" : "border-gray-100"
-                }`}
+                className={`bg-white rounded-xl border-2 p-4 transition-all shadow-sm ${cardBorder}`}
               >
                 <div className="flex items-start justify-between gap-3">
                   {/* Left: status dot + crew */}
@@ -278,9 +394,15 @@ export default function DailyActivityPage() {
                     </div>
                   </div>
 
-                  {/* Right: status badge */}
-                  <div className="shrink-0">
+                  {/* Right: status badge + delayed badge */}
+                  <div className="shrink-0 flex items-center gap-2">
                     <StatusBadge status={a.status} size="sm" />
+                    {a.isDelayed && (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 border border-red-300 px-2 py-0.5 rounded-full">
+                        <AlertTriangle size={10} />
+                        Demorado
+                      </span>
+                    )}
                   </div>
                 </div>
 

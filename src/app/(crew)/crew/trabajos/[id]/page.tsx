@@ -44,6 +44,7 @@ interface JobDetail {
   estimatedArea: number | null;
   internalNotes: string | null;
   assignmentNotes: string | null;
+  actualStartAt: string | null;
 }
 
 // ─── Mandatory modal for "Ya llegue" ────────────────────────────────────────
@@ -258,6 +259,9 @@ export default function CrewJobDetailPage() {
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<ServiceStatus | null>(null);
 
+  // Live work timer — seconds elapsed since actual_start_at
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+
   const fetchJob = useCallback(async () => {
     try {
       const supabase = createClient();
@@ -280,6 +284,7 @@ export default function CrewJobDetailPage() {
           scheduled_date,
           scheduled_start_time,
           scheduled_end_time,
+          actual_start_at,
           notes,
           service_request:service_requests!inner (
             id,
@@ -326,6 +331,7 @@ export default function CrewJobDetailPage() {
         estimatedArea: sr.estimated_area_sqm,
         internalNotes: sr.internal_notes,
         assignmentNotes: assignment.notes,
+        actualStartAt: (assignment as any).actual_start_at ?? null,
       };
 
       setJob(detail);
@@ -385,6 +391,29 @@ export default function CrewJobDetailPage() {
       }
     };
   }, [job?.status, userId, job?.assignmentId]);
+
+  // ─── Live work timer ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!job) return;
+
+    // Compute initial elapsed immediately (works for both in_progress and paused)
+    if (job.actualStartAt) {
+      const startMs = new Date(job.actualStartAt).getTime();
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
+    } else {
+      setElapsedSeconds(0);
+    }
+
+    // Only tick when actively in progress
+    if (job.status !== "in_progress" || !job.actualStartAt) return;
+
+    const startMs = new Date(job.actualStartAt).getTime();
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [job?.status, job?.actualStartAt]);
 
   // ─── Core status change (runs after modal confirms) ──────────────────────
   const applyStatusChange = async (
@@ -595,6 +624,70 @@ export default function CrewJobDetailPage() {
             Navegar al lugar
           </button>
         </Card>
+
+        {/* Work Timer — only when in_progress or paused */}
+        {(job.status === "in_progress" || job.status === "paused") && (
+          <div
+            className={`rounded-xl border p-5 ${
+              job.status === "in_progress"
+                ? "bg-green-50 border-green-200"
+                : "bg-amber-50 border-amber-200"
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-lg">⏱</span>
+              <span
+                className={`text-sm font-semibold ${
+                  job.status === "in_progress" ? "text-green-800" : "text-amber-800"
+                }`}
+              >
+                Tiempo trabajando
+              </span>
+            </div>
+
+            <p
+              className={`font-mono text-4xl font-bold text-center tracking-wider ${
+                job.status === "in_progress" ? "text-green-900" : "text-amber-900"
+              }`}
+            >
+              {String(Math.floor(elapsedSeconds / 3600)).padStart(2, "0")}:
+              {String(Math.floor((elapsedSeconds % 3600) / 60)).padStart(2, "0")}:
+              {String(elapsedSeconds % 60).padStart(2, "0")}
+            </p>
+
+            {job.actualStartAt && (
+              <p
+                className={`text-xs text-center mt-2 ${
+                  job.status === "in_progress" ? "text-green-600" : "text-amber-600"
+                }`}
+              >
+                {job.status === "in_progress" ? "En progreso desde las" : "Pausado — inicio a las"}{" "}
+                {new Date(job.actualStartAt).toLocaleTimeString("es-AR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </p>
+            )}
+
+            {job.scheduledStartTime &&
+              (() => {
+                const [h, m] = job.scheduledStartTime!.split(":").map(Number);
+                const scheduledMs =
+                  new Date(job.scheduledDate + "T00:00:00").getTime() +
+                  (h * 60 + m) * 60 * 1000;
+                return Date.now() >= scheduledMs ? (
+                  <p
+                    className={`text-xs text-center mt-1 flex items-center justify-center gap-1 ${
+                      job.status === "in_progress" ? "text-green-500" : "text-amber-500"
+                    }`}
+                  >
+                    <Clock size={11} />
+                    Inicio programado: {job.scheduledStartTime.slice(0, 5)}
+                  </p>
+                ) : null;
+              })()}
+          </div>
+        )}
 
         {/* Description */}
         {(job.description || job.internalNotes || job.estimatedArea) && (

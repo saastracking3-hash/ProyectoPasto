@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Camera, X, Loader2 } from "lucide-react";
+import { ArrowLeft, Camera, X, Loader2, Info, AlertTriangle } from "lucide-react";
 import Card from "@/components/ui/Card";
 import { createClient } from "@/lib/supabase/client";
 import type { PhotoType } from "@/lib/types";
@@ -20,6 +20,15 @@ const photoTypes: { value: PhotoType; label: string; color: string }[] = [
   { value: "during", label: "Durante", color: "bg-blue-100 text-blue-700" },
   { value: "after", label: "Despues", color: "bg-green-100 text-green-700" },
 ];
+
+const photoGuides: Record<PhotoType, string> = {
+  before:
+    "Foto ANTES del trabajo: encuadra toda el area verde, incluye bordes y obstaculos. Toma desde esquina del jardin mirando en diagonal.",
+  during:
+    "Foto DURANTE: muestra el trabajo en progreso. Captura el equipo y la superficie trabajada.",
+  after:
+    "Foto DESPUES: mismo angulo que el ANTES para comparacion perfecta. Limpieza visible, bordes definidos.",
+};
 
 function SkeletonPhotos() {
   return (
@@ -57,6 +66,8 @@ export default function FotosPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedType, setSelectedType] = useState<PhotoType>("before");
   const [userId, setUserId] = useState<string | null>(null);
+  const [qualityWarning, setQualityWarning] = useState<string | null>(null);
+  const [showAfterReminder, setShowAfterReminder] = useState(false);
 
   const fetchPhotos = useCallback(async () => {
     try {
@@ -110,9 +121,38 @@ export default function FotosPage() {
     fetchPhotos();
   }, [fetchPhotos]);
 
+  const checkImageQuality = (file: File) => {
+    setQualityWarning(null);
+
+    // Check file size (> 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      setQualityWarning(
+        "Foto demasiado grande — comprimila antes de subir."
+      );
+      return;
+    }
+
+    // Check dimensions
+    const img = new window.Image();
+    img.onload = () => {
+      if (img.width < 800 || img.height < 600) {
+        setQualityWarning(
+          "La foto es pequena — intenta tomar una de mayor calidad para mejor resultado."
+        );
+      }
+      URL.revokeObjectURL(img.src);
+    };
+    img.src = URL.createObjectURL(file);
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0 || !userId) return;
+
+    // Run quality check on first file before uploading
+    if (files[0]) {
+      checkImageQuality(files[0]);
+    }
 
     setUploading(true);
     setError(null);
@@ -200,6 +240,19 @@ export default function FotosPage() {
     }
   };
 
+  const handleFinalize = () => {
+    const afterCount = photos.filter((p) => p.photo_type === "after").length;
+    if (afterCount === 0) {
+      setShowAfterReminder(true);
+      return;
+    }
+    setShowAfterReminder(false);
+    router.back();
+  };
+
+  const countByType = (type: PhotoType) =>
+    photos.filter((p) => p.photo_type === type).length;
+
   const groupedPhotos = photoTypes.map((type) => ({
     ...type,
     photos: photos.filter((p) => p.photo_type === type.value),
@@ -209,6 +262,7 @@ export default function FotosPage() {
 
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <button
           onClick={() => router.back()}
@@ -230,21 +284,51 @@ export default function FotosPage() {
         </div>
       )}
 
-      {/* Type selector */}
-      <div className="flex gap-2">
-        {photoTypes.map((type) => (
-          <button
-            key={type.value}
-            onClick={() => setSelectedType(type.value)}
-            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-              selectedType === type.value
-                ? "bg-green-800 text-white"
-                : "bg-gray-100 text-gray-600"
-            }`}
-          >
-            {type.label}
-          </button>
-        ))}
+      {/* Quality warning */}
+      {qualityWarning && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm p-3 rounded-lg flex items-start gap-2">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+          <span>{qualityWarning}</span>
+        </div>
+      )}
+
+      {/* Type selector with count badges */}
+      <div className="flex gap-2 flex-wrap">
+        {photoTypes.map((type) => {
+          const count = countByType(type.value);
+          return (
+            <button
+              key={type.value}
+              onClick={() => setSelectedType(type.value)}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                selectedType === type.value
+                  ? "bg-green-800 text-white"
+                  : "bg-gray-100 text-gray-600"
+              }`}
+            >
+              {type.label}
+              {count > 0 && (
+                <span
+                  className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-xs font-bold ${
+                    selectedType === type.value
+                      ? "bg-white/30 text-white"
+                      : "bg-green-700 text-white"
+                  }`}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Photo guide tip */}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
+        <Info size={16} className="mt-0.5 shrink-0 text-amber-500" />
+        <p className="text-xs text-amber-800 leading-relaxed">
+          {photoGuides[selectedType]}
+        </p>
       </div>
 
       {/* Upload area */}
@@ -332,6 +416,24 @@ export default function FotosPage() {
           )}
         </div>
       ))}
+
+      {/* After reminder */}
+      {showAfterReminder && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-800 text-sm p-3 rounded-lg flex items-start gap-2">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+          <span>
+            Recorda que la foto DESPUES es obligatoria para cerrar el trabajo.
+          </span>
+        </div>
+      )}
+
+      {/* Finalize button */}
+      <button
+        onClick={handleFinalize}
+        className="w-full py-3 bg-green-800 text-white font-semibold rounded-xl hover:bg-green-700 transition-colors"
+      >
+        Finalizar
+      </button>
     </div>
   );
 }

@@ -11,7 +11,10 @@ import {
   Star,
   Calendar,
   TrendingUp,
+  TrendingDown,
   CheckCircle2,
+  Clock,
+  Award,
 } from "lucide-react";
 import Card, { CardHeader, CardTitle } from "@/components/ui/Card";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -50,6 +53,21 @@ interface CrewStats {
   completion_rate: number;
 }
 
+interface LastJob {
+  date: string;
+  service_type: string;
+  client_name: string;
+}
+
+interface CrewPerformanceStats {
+  completed_jobs: number;
+  this_month_completed: number;
+  last_month_completed: number;
+  avg_rating: number;
+  total_hours: number;
+  last_jobs: LastJob[];
+}
+
 export default function CuadrillaDetailPage() {
   const params = useParams();
   const id = params.id as string;
@@ -58,6 +76,7 @@ export default function CuadrillaDetailPage() {
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [stats, setStats] = useState<CrewStats>({ total_services: 0, this_month: 0, avg_rating: 0, completion_rate: 0 });
+  const [crewStats, setCrewStats] = useState<CrewPerformanceStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -170,6 +189,94 @@ export default function CuadrillaDetailPage() {
           this_month: monthCount ?? 0,
           avg_rating: Math.round(avgRating * 10) / 10,
           completion_rate: total > 0 ? Math.round((completed / total) * 100) : 0,
+        });
+
+        // ── Performance stats ──────────────────────────────────────────────
+
+        const completedStatuses = ["completed_by_crew", "validated", "closed"];
+
+        // Date ranges
+        const now = new Date();
+        const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        // All assignment IDs for this crew with completed status (via join)
+        const { data: completedAssigns } = await supabase
+          .from("assignments")
+          .select("id, service_request_id, scheduled_date, actual_start_at, actual_end_at, service_requests!inner(status, profiles!service_requests_client_id_fkey(full_name), service_types!inner(name))")
+          .eq("crew_id", id)
+          .in("service_requests.status", completedStatuses);
+
+        const completedList = completedAssigns ?? [];
+
+        // Completed total
+        const perfCompleted = completedList.length;
+
+        // This month / last month (by scheduled_date)
+        const perfThisMonth = completedList.filter((a: Record<string, unknown>) => {
+          const d = new Date(a.scheduled_date as string);
+          return d >= thisMonthStart;
+        }).length;
+
+        const perfLastMonth = completedList.filter((a: Record<string, unknown>) => {
+          const d = new Date(a.scheduled_date as string);
+          return d >= lastMonthStart && d < lastMonthEnd;
+        }).length;
+
+        // Total hours: sum (actual_end_at - actual_start_at) where both exist
+        let totalMinutes = 0;
+        for (const a of completedList as Record<string, unknown>[]) {
+          if (a.actual_end_at && a.actual_start_at) {
+            const diff = new Date(a.actual_end_at as string).getTime() - new Date(a.actual_start_at as string).getTime();
+            if (diff > 0) totalMinutes += diff / 60000;
+          }
+        }
+        const totalHours = Math.round(totalMinutes / 60);
+
+        // Average rating for completed assignments
+        const completedSrIds = completedList.map((a: Record<string, unknown>) => a.service_request_id as string);
+        let perfAvgRating = 0;
+        if (completedSrIds.length > 0) {
+          const { data: perfReviews } = await supabase
+            .from("reviews")
+            .select("rating")
+            .in("service_request_id", completedSrIds);
+          if (perfReviews && perfReviews.length > 0) {
+            perfAvgRating =
+              Math.round(
+                (perfReviews.reduce((s: number, r: { rating: number }) => s + r.rating, 0) /
+                  perfReviews.length) *
+                  10
+              ) / 10;
+          }
+        }
+
+        // Last 5 completed jobs sorted by date desc
+        const sortedCompleted = [...completedList].sort((a, b) => {
+          const da = new Date((a as Record<string, unknown>).scheduled_date as string).getTime();
+          const db = new Date((b as Record<string, unknown>).scheduled_date as string).getTime();
+          return db - da;
+        });
+        const lastJobs: LastJob[] = sortedCompleted.slice(0, 5).map((a) => {
+          const ar = a as Record<string, unknown>;
+          const sr = ar.service_requests as Record<string, unknown>;
+          const prof = sr.profiles as { full_name?: string } | null;
+          const st = sr.service_types as { name?: string } | null;
+          return {
+            date: ar.scheduled_date as string,
+            service_type: st?.name ?? "-",
+            client_name: prof?.full_name ?? "Sin nombre",
+          };
+        });
+
+        setCrewStats({
+          completed_jobs: perfCompleted,
+          this_month_completed: perfThisMonth,
+          last_month_completed: perfLastMonth,
+          avg_rating: perfAvgRating,
+          total_hours: totalHours,
+          last_jobs: lastJobs,
         });
       } catch {
         setError("Error al cargar la cuadrilla");
@@ -367,6 +474,103 @@ export default function CuadrillaDetailPage() {
           </Card>
         </div>
       </div>
+
+      {/* ── Estadísticas del equipo ─────────────────────────────────────── */}
+      {crewStats && (
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              <span className="flex items-center gap-2">
+                <Award size={18} className="text-green-600" />
+                Estadísticas del equipo
+              </span>
+            </CardTitle>
+          </CardHeader>
+
+          {/* KPI row */}
+          <div className="grid grid-cols-3 gap-4 mt-2">
+            {/* Completed jobs */}
+            <div className="flex flex-col items-center p-4 bg-blue-50 rounded-xl">
+              <CheckCircle2 size={22} className="text-blue-600 mb-1" />
+              <p className="text-2xl font-bold text-gray-900">{crewStats.completed_jobs}</p>
+              <p className="text-xs text-gray-500 text-center">trabajos completados</p>
+            </div>
+
+            {/* Average rating */}
+            <div className="flex flex-col items-center p-4 bg-amber-50 rounded-xl">
+              <Star size={22} className="text-amber-500 mb-1" />
+              <p className="text-2xl font-bold text-gray-900">
+                {crewStats.avg_rating > 0 ? `${crewStats.avg_rating}★` : "—"}
+              </p>
+              <p className="text-xs text-gray-500 text-center">rating promedio</p>
+            </div>
+
+            {/* Total hours */}
+            <div className="flex flex-col items-center p-4 bg-purple-50 rounded-xl">
+              <Clock size={22} className="text-purple-600 mb-1" />
+              <p className="text-2xl font-bold text-gray-900">{crewStats.total_hours}</p>
+              <p className="text-xs text-gray-500 text-center">horas trabajadas</p>
+            </div>
+          </div>
+
+          {/* Month comparison */}
+          <div className="mt-4 flex items-center gap-3 flex-wrap text-sm">
+            <span className="text-gray-600">
+              <span className="font-semibold text-gray-900">{crewStats.this_month_completed}</span> este mes
+            </span>
+            <span className="text-gray-400">·</span>
+            <span className="text-gray-600">
+              <span className="font-semibold text-gray-900">{crewStats.last_month_completed}</span> último mes
+            </span>
+            {crewStats.last_month_completed > 0 && (
+              (() => {
+                const diff = crewStats.this_month_completed - crewStats.last_month_completed;
+                const pct = Math.abs(Math.round((diff / crewStats.last_month_completed) * 100));
+                const up = diff >= 0;
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1 font-medium ${
+                      up ? "text-green-600" : "text-red-500"
+                    }`}
+                  >
+                    {up ? (
+                      <TrendingUp size={15} />
+                    ) : (
+                      <TrendingDown size={15} />
+                    )}
+                    {up ? "+" : "-"}{pct}%
+                  </span>
+                );
+              })()
+            )}
+          </div>
+
+          {/* Last 5 jobs */}
+          {crewStats.last_jobs.length > 0 && (
+            <div className="mt-5">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Últimos trabajos
+              </p>
+              <ul className="space-y-1.5">
+                {crewStats.last_jobs.map((job, idx) => (
+                  <li key={idx} className="flex items-start gap-2 text-sm text-gray-700">
+                    <span className="mt-0.5 w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+                    <span>
+                      <span className="font-medium text-gray-500">
+                        {new Date(job.date).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })}
+                      </span>
+                      {" · "}
+                      {job.service_type}
+                      {" · "}
+                      <span className="text-gray-500">{job.client_name}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
