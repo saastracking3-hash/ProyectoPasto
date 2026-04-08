@@ -20,6 +20,7 @@ import {
   LogOut,
   Menu,
   X,
+  Radio,
 } from "lucide-react";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -27,6 +28,7 @@ import NotificationBell from "@/components/ui/NotificationBell";
 
 const navItems = [
   { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/admin/daily-activity", label: "Daily Activity", icon: Radio },
   { href: "/admin/solicitudes", label: "Solicitudes", icon: Inbox },
   { href: "/admin/presupuestos", label: "Presupuestos", icon: FileText },
   { href: "/admin/agenda", label: "Agenda", icon: Calendar },
